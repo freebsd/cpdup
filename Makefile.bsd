@@ -1,0 +1,17 @@
+PROG=	cpdup
+SRCS=	src/cpdup.c \
+	src/hcproto.c \
+	src/hclink.c \
+	src/misc.c \
+	src/checksum.c
+MK_DEBUG_FILES=no
+NO_EXTRADEPEND=yes
+_SKIP_DEPEND=yes
+LDADD?=	-lcrypto
+CFLAGS+=	-D_ST_FLAGS_PRESENT_
+PREFIX?=	/usr/local
+BINDIR?=	${PREFIX}/bin
+MANDIR?=	${PREFIX}/man/man
+
+.include <bsd.prog.mk>
+
