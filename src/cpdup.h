@@ -39,12 +39,6 @@
  */
 #ifdef __linux
 
-#define __printflike(a, b)
-#define __printf0like(a, b)
-#define __aligned(n)
-#define __dead2
-#define __unused
-
 #define lchmod	chmod	/* horrible hack */
 
 size_t strlcpy(char *dst, const char *src, size_t size);
@@ -54,12 +48,20 @@ size_t strlcpy(char *dst, const char *src, size_t size);
 #define VERSION	"1.22"
 #define AUTHORS	"Matt Dillon, Dima Ruban, & Oliver Fromme"
 
-#ifndef __unused
+#if !defined(__unused)
+#if (defined(__GNUC__) || defined(__clang__))
 #define __unused __attribute__((unused))
+#else
+#define __unused
+#endif
 #endif
 
-#ifndef __dead2
+#if !defined(__dead2)
+#if (defined(__GNUC__) || defined(__clang__))
 #define __dead2 __attribute__((__noreturn__))
+#else
+#define __dead2
+#endif
 #endif
 
 #ifndef __printf0like

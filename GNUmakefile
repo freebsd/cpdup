@@ -5,12 +5,13 @@ OBJS=		$(SRCS:.c=.o)
 DISTFILES=	GNUmakefile LICENSE README.md src $(MAN)
 DISTFILES+=	BACKUPS PORTING
 
-CFLAGS=		-O -pipe -std=c99 -pedantic
-CFLAGS+=	-Wall -Wextra -Wlogical-op -Wshadow -Wformat=2 \
+CFLAGS+=	-O2 -pipe -std=c99 -pedantic
+WARNFLAGS?=	-Wall -Wextra -Wshadow -Wformat=2 \
 		-Wwrite-strings -Wcast-qual -Wcast-align
-#CFLAGS+=	-Wduplicated-cond -Wduplicated-branches \
+#WARNFLAGS+=	-Wduplicated-cond -Wduplicated-branches \
 		-Wrestrict -Wnull-dereference \
-#CFLAGS+=	-Wconversion
+#WARNFLAGS+=	-Wconversion
+CFLAGS+=	$(WARNFLAGS)
 
 CFLAGS+=	$(shell pkg-config --cflags openssl)
 LIBS+=		$(shell pkg-config --libs   openssl)
