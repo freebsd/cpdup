@@ -1,0 +1,15 @@
+env:
+  CIRRUS_CLONE_DEPTH: 1
+  ARCH: amd64
+
+build_task:
+  matrix:
+    freebsd_instance:
+      image_family: freebsd-14-1
+    freebsd_instance:
+      image_family: freebsd-13-4
+  build_script:
+  - make -f Makefile.bsd
+  install_script:
+  - mkdir -p /usr/local/man/man1
+  - make -f Makefile.bsd install PREFIX=/usr/local
