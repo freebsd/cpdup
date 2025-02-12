@@ -45,8 +45,8 @@ size_t strlcpy(char *dst, const char *src, size_t size);
 
 #endif
 
-#define VERSION	"1.22"
-#define AUTHORS	"Matt Dillon, Dima Ruban, & Oliver Fromme"
+#define VERSION	"1.0.0"
+#define AUTHORS	"Matt Dillon, Dima Ruban, Oliver Fromme & Martin Matuska"
 
 #if !defined(__unused)
 #if (defined(__GNUC__) || defined(__clang__))
