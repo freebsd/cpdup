@@ -1,5 +1,5 @@
-CPDUP -- Filesystem Mirroring Utility
-=====================================
+CPDUP-FREEBSD -- Filesystem Mirroring Utility
+=============================================
 
 Introduction
 ------------
