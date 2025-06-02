@@ -47,6 +47,7 @@ install:
 
 rpm:
 	mkdir -p $(OUTPUT_DIR)
+	rm -rf $(RPMBUILD_DIR)
 	mkdir -p $(RPMBUILD_DIR)/BUILD
 	cp -Rp $(DISTFILES) $(RPMBUILD_DIR)/BUILD/
 	rpmbuild -bb -v \
@@ -60,6 +61,7 @@ rpm:
 
 archpkg:
 	mkdir -p $(OUTPUT_DIR)
+	rm -rf $(ARCHBUILD_DIR)
 	mkdir -p $(ARCHBUILD_DIR)/src
 	cp linux/PKGBUILD $(ARCHBUILD_DIR)/
 	cp -Rp $(DISTFILES) $(ARCHBUILD_DIR)/src/
