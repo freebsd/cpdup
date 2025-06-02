@@ -27,9 +27,9 @@
 #include <openssl/evp.h>
 #endif
 
+#ifdef __linux
+
 /*
- * See ./mklinux script
- *
  * This is a horrible hack.  lchmod also seems to be missing
  * on the Debian system I am testing compatibility on (which will
  * break the symlink handling code), so not sure what to do about
@@ -37,20 +37,24 @@
  *
  * XXX TODO
  */
-#ifdef __linux
-
 #define lchmod	chmod	/* horrible hack */
 
-#endif
+#endif /* __linux */
 
 #define VERSION	"1.22"
 #define AUTHORS	"Matt Dillon, Dima Ruban, & Oliver Fromme"
 
 #if !defined(__unused)
 #if (defined(__GNUC__) || defined(__clang__))
-#define __unused __attribute__((unused))
+#define __unused __attribute__((__unused__))
 #else
 #define __unused
+#endif
+#endif
+
+#if !defined(__aligned)
+#if (defined(__GNUC__) || defined(__clang__))
+#define __aligned(n) __attribute__((__aligned__(n)))
 #endif
 #endif
 
@@ -62,8 +66,13 @@
 #endif
 #endif
 
+#ifndef __printflike
+#define __printflike(a,b) \
+	__attribute__((__nonnull__(a), __format__(__printf__, a, b)))
+#endif
+
 #ifndef __printf0like
-#define __printf0like(a,b) __attribute__((__format__ (__printf__, a, b)))
+#define __printf0like(a,b) __attribute__((__format__(__printf__, a, b)))
 #endif
 
 void logstd(const char *ctl, ...) __printflike(1, 2);
