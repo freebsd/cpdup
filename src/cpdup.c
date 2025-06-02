@@ -1806,7 +1806,7 @@ YesNo(const char *path)
  */
 
 static int
-xrename(const char *src, const char *dst, u_long flags __unused)
+xrename(const char *src, const char *dst, u_long flags)
 {
     int r;
 
@@ -1823,21 +1823,22 @@ xrename(const char *src, const char *dst, u_long flags __unused)
 	    else
 		hc_chflags(&DstHost, dst, flags);
 	}
+#else
+	(void)flags;
 #endif
     }
     return(r);
 }
 
 static int
-xlink(const char *src, const char *dst, u_long flags __unused)
+xlink(const char *src, const char *dst, u_long flags)
 {
     int r;
-#ifdef _ST_FLAGS_PRESENT_
-    int e;
-#endif
 
     if ((r = hc_link(&DstHost, src, dst)) < 0) {
 #ifdef _ST_FLAGS_PRESENT_
+	int e;
+
 	if (DstHost.version >= HCPROTO_VERSION_LUCC)
 	    hc_lchflags(&DstHost, src, 0);
 	else
@@ -1846,6 +1847,8 @@ xlink(const char *src, const char *dst, u_long flags __unused)
 	e = errno;
 	hc_chflags(&DstHost, src, flags);
 	errno = e;
+#else
+	(void)flags;
 #endif
     }
     if (r == 0)
