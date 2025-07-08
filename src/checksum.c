@@ -44,7 +44,7 @@ typedef struct CSUMNode {
 
 static CSUMNode *csum_lookup(const char *sfile);
 static void csum_cache(const char *spath, int sdirlen);
-static char *doCsumFile(const EVP_MD *algo, const char *filename, char *buf, int is_target);
+static char *csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target);
 
 static char *CSUMSCache;		/* cache source directory name */
 static CSUMNode *CSUMBase;
@@ -230,7 +230,7 @@ csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
      */
 
     if (dpath == NULL) {
-	char *scode = doCsumFile(algo, spath, NULL, 0);
+	char *scode = csum_file(algo, spath, NULL, 0);
 
 	r = 0;
 	if (node->csum_Code == NULL) {
@@ -253,16 +253,16 @@ csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
      */
 
     if (node->csum_Code == NULL) {
-	node->csum_Code = doCsumFile(algo, spath, NULL, 0);
+	node->csum_Code = csum_file(algo, spath, NULL, 0);
 	CSUMSCacheDirty = 1;
     }
 
-    dcode = doCsumFile(algo, dpath, NULL, 1);
+    dcode = csum_file(algo, dpath, NULL, 1);
     if (dcode) {
 	if (strcmp(node->csum_Code, dcode) == 0) {
 	    r = 0;
 	} else {
-	    char *scode = doCsumFile(algo, spath, NULL, 0);
+	    char *scode = csum_file(algo, spath, NULL, 0);
 
 	    if (strcmp(node->csum_Code, scode) == 0) {
 		    free(scode);
@@ -280,10 +280,10 @@ csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
 }
 
 static char *
-csum_file(const EVP_MD *algo, const char *filename, char *buf)
+csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target)
 {
-    unsigned char digest[EVP_MAX_MD_SIZE];
     static const char hex[] = "0123456789abcdef";
+    unsigned char digest[EVP_MAX_MD_SIZE];
     EVP_MD_CTX *ctx;
     unsigned char buffer[4096];
     struct stat st;
@@ -316,8 +316,14 @@ csum_file(const EVP_MD *algo, const char *filename, char *buf)
 	     goto err;
 	size -= bytes;
     }
+    if (SummaryOpt) {
+	if (is_target)
+	    CountTargetReadBytes += st.st_size;
+	else
+	    CountSourceReadBytes += st.st_size;
+    }
 
-    if (!EVP_DigestFinal(ctx, digest, &md_len))
+    if (!EVP_DigestFinal(ctx, digest, &csum_len))
 	goto err;
 
     if (!buf)
@@ -342,20 +348,4 @@ err:
     if (ctx != NULL)
 	EVP_MD_CTX_free(ctx);
     return NULL;
-}
-
-char *
-doCsumFile(const EVP_MD *algo, const char *filename, char *buf, int is_target)
-{
-    if (SummaryOpt) {
-	struct stat st;
-	if (stat(filename, &st) == 0) {
-	    uint64_t size = st.st_size;
-	    if (is_target)
-		    CountTargetReadBytes += size;
-	    else
-		    CountSourceReadBytes += size;
-	}
-    }
-    return csum_file(algo, filename, buf);
 }
