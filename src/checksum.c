@@ -55,12 +55,11 @@ static int CSUMSCacheDirty;
 void
 csum_flush(void)
 {
-    if (CSUMSCacheDirty && CSUMSCache && NotForRealOpt == 0) {
-	FILE *fo;
+    CSUMNode *node;
+    FILE *fo;
 
+    if (CSUMSCacheDirty && CSUMSCache && !NotForRealOpt) {
 	if ((fo = fopen(CSUMSCache, "w")) != NULL) {
-	    CSUMNode *node;
-
 	    for (node = CSUMBase; node; node = node->csum_Next) {
 		if (node->csum_Accessed && node->csum_Code) {
 		    fprintf(fo, "%s %zu %s\n",
@@ -77,8 +76,6 @@ csum_flush(void)
     CSUMSCacheDirty = 0;
 
     if (CSUMSCache) {
-	CSUMNode *node;
-
 	while ((node = CSUMBase) != NULL) {
 	    CSUMBase = node->csum_Next;
 
@@ -126,24 +123,19 @@ csum_cache(const char *spath, int sdirlen)
 
     if ((fi = fopen(CSUMSCache, "r")) != NULL) {
 	CSUMNode **pnode = &CSUMBase;
-	int c;
+	CSUMNode *node;
+	int c, nlen;
+	char *s;
 
-	c = fgetc(fi);
-	while (c != EOF) {
-	    CSUMNode *node = *pnode = malloc(sizeof(CSUMNode));
-	    char *s;
-	    int nlen;
-
-	    nlen = 0;
-
-	    if (pnode == NULL || node == NULL) {
-		fprintf(stderr, "out of memory\n");
-		exit(EXIT_FAILURE);
-	    }
+	while ((c = fgetc(fi)) != EOF) {
+	    node = malloc(sizeof(CSUMNode));
+	    if (node == NULL)
+		fatal("out of memory");
 
 	    bzero(node, sizeof(CSUMNode));
 	    node->csum_Code = fextract(fi, -1, &c, ' ');
 	    node->csum_Accessed = 1;
+	    nlen = 0;
 	    if ((s = fextract(fi, -1, &c, ' ')) != NULL) {
 		nlen = strtol(s, NULL, 0);
 		free(s);
@@ -155,14 +147,16 @@ csum_cache(const char *spath, int sdirlen)
 	    CountSourceReadBytes += nlen+1;
 	    node->csum_Name = fextract(fi, nlen, &c, EOF);
 	    if (c != '\n') {
-		fprintf(stderr, "Error parsing CSUM Cache: %s (%c)\n", CSUMSCache, c);
+		fprintf(stderr, "Error parsing checksum cache: %s (%c)\n",
+			CSUMSCache, c);
 		while (c != EOF && c != '\n')
 		    c = fgetc(fi);
 	    }
-	    if (c != EOF)
-		c = fgetc(fi);
+
+	    *pnode = node;
 	    pnode = &node->csum_Next;
 	}
+
 	fclose(fi);
     }
 }
@@ -174,23 +168,20 @@ csum_cache(const char *spath, int sdirlen)
 static CSUMNode *
 csum_lookup(const char *sfile)
 {
-    CSUMNode **pnode;
     CSUMNode *node;
 
-    for (pnode = &CSUMBase; (node = *pnode) != NULL; pnode = &node->csum_Next) {
-	if (strcmp(sfile, node->csum_Name) == 0) {
+    for (node = CSUMBase; node != NULL; node = node->csum_Next) {
+	if (strcmp(sfile, node->csum_Name) == 0)
 	    break;
-	}
     }
     if (node == NULL) {
-
-	if ((node = *pnode = malloc(sizeof(CSUMNode))) == NULL) {
-		fprintf(stderr,"out of memory\n");
-		exit(EXIT_FAILURE);
-	}
+	if ((node = malloc(sizeof(CSUMNode))) == NULL)
+	    fatal("out of memory");
 
 	bzero(node, sizeof(CSUMNode));
 	node->csum_Name = strdup(sfile);
+	node->csum_Next = CSUMBase;
+	CSUMBase = node;
     }
     node->csum_Accessed = 1;
     return(node);
