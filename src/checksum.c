@@ -38,14 +38,14 @@
 typedef struct CSUMNode {
     struct CSUMNode *csum_Next;
     char *csum_Name;
-    char *csum_Code;
+    char csum_Code[EVP_MAX_MD_SIZE * 2 + 1]; /* hex-encoded digest */
     int csum_Accessed;
 } CSUMNode;
 
 static CSUMNode *csum_lookup(const char *spath);
 static void csum_cache(const char *spath, int sdirlen);
-static char *csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target);
-static char *fextract(FILE *fi, int n, int *pc, int skip);
+static int csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target);
+static int fextract(FILE *fi, int *pc, char *buf, size_t len);
 
 static char *CSUMSCache;		/* cache source directory name */
 static CSUMNode *CSUMBase;
@@ -61,7 +61,7 @@ csum_flush(void)
     if (CSUMSCacheDirty && CSUMSCache && !NotForRealOpt) {
 	if ((fo = fopen(CSUMSCache, "w")) != NULL) {
 	    for (node = CSUMBase; node; node = node->csum_Next) {
-		if (node->csum_Accessed && node->csum_Code) {
+		if (node->csum_Accessed && node->csum_Code[0] != '\0') {
 		    fprintf(fo, "%s %zu %s\n",
 			node->csum_Code,
 			strlen(node->csum_Name),
@@ -79,9 +79,7 @@ csum_flush(void)
 	while ((node = CSUMBase) != NULL) {
 	    CSUMBase = node->csum_Next;
 
-	    if (node->csum_Code)
-		free(node->csum_Code);
-	    if (node->csum_Name)
+	    if (node->csum_Name != NULL)
 		free(node->csum_Name);
 	    free(node);
 	}
@@ -121,11 +119,19 @@ csum_cache(const char *spath, int sdirlen)
     CSUMSCacheDirLen = sdirlen;
     CSUMSCache = mprintf("%*.*s%s", sdirlen, sdirlen, spath, CsumCacheFile);
 
+    /*
+     * Line format: "<code> <name_len> <name>"
+     * - code: hex-encoded digest
+     * - name_len: 10-based integer indicating the length of the file name
+     * - name: the file name (may contain special characters)
+     * Example: "359d5608935488c8d0af7eb2a350e2f8 7 cpdup.c"
+     */
     if ((fi = fopen(CSUMSCache, "r")) != NULL) {
 	CSUMNode **pnode = &CSUMBase;
 	CSUMNode *node;
-	int c, nlen;
-	char *s;
+	int c, n, nlen;
+	char nbuf[sizeof("2147483647")];
+	char *endp;
 
 	while ((c = fgetc(fi)) != EOF) {
 	    node = malloc(sizeof(CSUMNode));
@@ -133,28 +139,66 @@ csum_cache(const char *spath, int sdirlen)
 		fatal("out of memory");
 
 	    bzero(node, sizeof(CSUMNode));
-	    node->csum_Code = fextract(fi, -1, &c, ' ');
-	    node->csum_Accessed = 1;
-	    nlen = 0;
-	    if ((s = fextract(fi, -1, &c, ' ')) != NULL) {
-		nlen = strtol(s, NULL, 0);
-		free(s);
-	    }
-	    /*
-	     * extracting csum_Name - name may contain embedded control
-	     * characters.
-	     */
-	    CountSourceReadBytes += nlen+1;
-	    node->csum_Name = fextract(fi, nlen, &c, EOF);
-	    if (c != '\n') {
-		fprintf(stderr, "Error parsing checksum cache: %s (%c)\n",
-			CSUMSCache, c);
-		while (c != EOF && c != '\n')
-		    c = fgetc(fi);
+
+	    if (fextract(fi, &c, node->csum_Code, sizeof(node->csum_Code)) != 0) {
+		logerr("Error parsing checksum cache (%s): invalid digest code\n",
+		       CSUMSCache);
+		goto skip;
 	    }
 
+	    c = fgetc(fi);
+	    if (fextract(fi, &c, nbuf, sizeof(nbuf)) != 0) {
+		logerr("Error parsing checksum cache (%s): invalid length\n",
+		       CSUMSCache);
+		goto skip;
+	    }
+	    nlen = strtol(nbuf, &endp, 10);
+	    if (*endp != '\0' || nlen == 0) {
+		logerr("Error parsing checksum cache (%s): invalid length\n",
+		       CSUMSCache);
+		goto skip;
+	    }
+
+	    if ((node->csum_Name = malloc(nlen + 1)) == NULL)
+		fatal("out of memory");
+	    for (n = 0; n < nlen; n++) {
+		c = fgetc(fi);
+		node->csum_Name[n] = c;
+		if (c == EOF) {
+		    logerr("Error parsing checksum cache (%s): invalid filename\n",
+			   CSUMSCache);
+		    goto skip;
+		}
+	    }
+	    node->csum_Name[n] = '\0';
+
+	    c = fgetc(fi);
+	    if (c != '\n' && c != EOF) {
+		logerr("Error parsing checksum cache (%s): trailing garbage\n",
+		       CSUMSCache);
+		goto skip;
+	    }
+
+	    node->csum_Accessed = 1;
 	    *pnode = node;
 	    pnode = &node->csum_Next;
+
+	    if (SummaryOpt) {
+		CountSourceReadBytes += strlen(node->csum_Code) + strlen(nbuf) +
+		    nlen + 1;
+	    }
+	    if (c == EOF)
+		break;
+	    continue;
+
+	skip:
+	    if (node->csum_Name != NULL)
+		free(node->csum_Name);
+	    free(node);
+	    while (c != EOF && c != '\n')
+		c = fgetc(fi);
+	    if (c == EOF)
+		break;
 	}
 
 	fclose(fi);
@@ -164,7 +208,6 @@ csum_cache(const char *spath, int sdirlen)
 /*
  * csum_lookup:	lookup/create csum entry
  */
-
 static CSUMNode *
 csum_lookup(const char *spath)
 {
@@ -207,28 +250,21 @@ csum_lookup(const char *spath)
 int
 csum_update(const EVP_MD *algo, const char *spath)
 {
-    char *scode;
+    char scode[EVP_MAX_MD_SIZE * 2 + 1];
     int r;
     CSUMNode *node;
 
     node = csum_lookup(spath);
 
-    scode = csum_file(algo, spath, NULL, 0);
-    if (scode == NULL)
-	return (-1);
-
-    r = 0;
-    if (node->csum_Code == NULL) {
-	r = 1;
-	node->csum_Code = scode;
-	CSUMSCacheDirty = 1;
-    } else if (strcmp(scode, node->csum_Code) != 0) {
-	r = 1;
-	free(node->csum_Code);
-	node->csum_Code = scode;
-	CSUMSCacheDirty = 1;
+    if (csum_file(algo, spath, scode, 0 /* is_target */) == 0) {
+	r = 0;
+	if (strcmp(scode, node->csum_Code) != 0) {
+	    r = 1;
+	    bcopy(scode, node->csum_Code, sizeof(scode));
+	    CSUMSCacheDirty = 1;
+	}
     } else {
-	free(scode);
+	r = -1;
     }
 
     return (r);
@@ -244,7 +280,8 @@ csum_update(const EVP_MD *algo, const char *spath)
 int
 csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
 {
-    char *scode, *dcode;
+    char scode[EVP_MAX_MD_SIZE * 2 + 1];
+    char dcode[EVP_MAX_MD_SIZE * 2 + 1];
     int r;
     CSUMNode *node;
 
@@ -253,43 +290,36 @@ csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
     /*
      * The checksum file is used as a cache.
      */
-    if (node->csum_Code == NULL) {
-	scode = csum_file(algo, spath, NULL, 0);
-	if (scode == NULL)
-	    return (-1);
-
-	node->csum_Code = scode;
-	CSUMSCacheDirty = 1;
-    }
-
-    dcode = csum_file(algo, dpath, NULL, 1);
-    if (dcode == NULL)
-	return (-1);
-
-    r = 0;
-    if (strcmp(node->csum_Code, dcode) != 0) {
-	r = 1;
-
-	scode = csum_file(algo, spath, NULL, 0);
-	if (scode == NULL)
-	    return (-1);
-
-	if (strcmp(node->csum_Code, scode) == 0) {
-	    free(scode);
-	} else {
-	    free(node->csum_Code);
-	    node->csum_Code = scode;
-	    CSUMSCacheDirty = 1;
-	    if (strcmp(node->csum_Code, dcode) == 0)
-		r = 0;
+    if (csum_file(algo, dpath, dcode, 1 /* is_target */) == 0) {
+	r = 0;
+	if (strcmp(node->csum_Code, dcode) != 0) {
+	    r = 1;
+	    /*
+	     * Update the source digest code and recheck.
+	     */
+	    if (csum_file(algo, spath, scode, 0 /* is_target */) == 0) {
+		if (strcmp(node->csum_Code, scode) != 0) {
+		    bcopy(scode, node->csum_Code, sizeof(scode));
+		    CSUMSCacheDirty = 1;
+		    if (strcmp(node->csum_Code, dcode) == 0)
+			r = 0;
+		}
+	    } else {
+		r = -1;
+	    }
 	}
+    } else {
+	r = -1;
     }
-    free(dcode);
 
     return(r);
 }
 
-static char *
+/*
+ * NOTE: buf will hold the hex-encoded digest and should have a size of
+ *       >= (EVP_MAX_MD_SIZE * 2 + 1).
+ */
+static int
 csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target)
 {
     static const char hex[] = "0123456789abcdef";
@@ -340,11 +370,6 @@ csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target)
     if (!EVP_DigestFinal(ctx, digest, &csum_len))
 	goto err;
 
-    if (!buf)
-	buf = malloc(csum_len * 2 + 1);
-    if (!buf)
-	goto err;
-
     close(fd);
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
     EVP_MD_CTX_free(ctx);
@@ -358,7 +383,7 @@ csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target)
     }
     buf[csum_len * 2] = '\0';
 
-    return buf;
+    return (0);
 
 err:
     if (fd >= 0)
@@ -370,43 +395,32 @@ err:
 	EVP_MD_CTX_destroy(ctx);
 #endif
     }
-    return NULL;
+    return (-1);
 }
 
-static char *
-fextract(FILE *fi, int n, int *pc, int skip)
+static int
+fextract(FILE *fi, int *pc, char *buf, size_t len)
 {
-    int i;
+    size_t n;
     int c;
-    int imax;
-    char *s;
 
-    i = 0;
+    n = 0;
     c = *pc;
-    imax = (n < 0) ? 64 : n + 1;
-
-    s = malloc(imax);
-    if (s == NULL)
-	fatal("out of memory");
 
     while (c != EOF) {
-	if (n == 0 || (n < 0 && (c == ' ' || c == '\n')))
+	if (c == ' ') {
+	    *pc = c;
+	    buf[n] = '\0';
+	    return (0);
+	}
+
+	buf[n++] = c;
+	if (n == len)
 	    break;
 
-	s[i++] = c;
-	if (i == imax) {
-	    imax += 64;
-	    s = realloc(s, imax);
-	    if (s == NULL)
-		fatal("out of memory");
-	}
-	if (n > 0)
-	    --n;
-	c = getc(fi);
+	c = fgetc(fi);
     }
-    if (c == skip && skip != EOF)
-	c = getc(fi);
+
     *pc = c;
-    s[i] = 0;
-    return(s);
+    return (-1);
 }
