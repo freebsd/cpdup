@@ -114,6 +114,7 @@ int32_t hc_bswap32(int32_t var);
 int64_t hc_bswap64(int64_t var);
 
 #ifndef NOCHECKSUM
+int csum_update(const EVP_MD *algo, const char *spath);
 int csum_check(const EVP_MD *algo, const char *spath, const char *dpath);
 void csum_flush(void);
 #endif

@@ -42,7 +42,7 @@ typedef struct CSUMNode {
     int csum_Accessed;
 } CSUMNode;
 
-static CSUMNode *csum_lookup(const char *sfile);
+static CSUMNode *csum_lookup(const char *spath);
 static void csum_cache(const char *spath, int sdirlen);
 static char *csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target);
 static char *fextract(FILE *fi, int n, int *pc, int skip);
@@ -166,9 +166,19 @@ csum_cache(const char *spath, int sdirlen)
  */
 
 static CSUMNode *
-csum_lookup(const char *sfile)
+csum_lookup(const char *spath)
 {
+    const char *sfile;
+    int sdirlen;
     CSUMNode *node;
+
+    if ((sfile = strrchr(spath, '/')) != NULL)
+	++sfile;
+    else
+	sfile = spath;
+    sdirlen = sfile - spath;
+
+    csum_cache(spath, sdirlen);
 
     for (node = CSUMBase; node != NULL; node = node->csum_Next) {
 	if (strcmp(sfile, node->csum_Name) == 0)
@@ -188,86 +198,94 @@ csum_lookup(const char *sfile)
 }
 
 /*
- * csum_check:  check CSUM against file
+ * csum_update:	force update the source checksum file.
+ *
+ *	Return -1 if failed
+ *	Return 0  if up-to-date
+ *	Return 1  if updated
+ */
+int
+csum_update(const EVP_MD *algo, const char *spath)
+{
+    char *scode;
+    int r;
+    CSUMNode *node;
+
+    node = csum_lookup(spath);
+
+    scode = csum_file(algo, spath, NULL, 0);
+    if (scode == NULL)
+	return (-1);
+
+    r = 0;
+    if (node->csum_Code == NULL) {
+	r = 1;
+	node->csum_Code = scode;
+	CSUMSCacheDirty = 1;
+    } else if (strcmp(scode, node->csum_Code) != 0) {
+	r = 1;
+	free(node->csum_Code);
+	node->csum_Code = scode;
+	CSUMSCacheDirty = 1;
+    } else {
+	free(scode);
+    }
+
+    return (r);
+}
+
+/*
+ * csum_check:	check checksum against file
  *
  *	Return -1 if check failed
- *	Return 0  if check succeeded
- *
- * dpath can be NULL, in which case we are force-updating
- * the source CSUM.
+ *	Return 0  if source and dest files are identical
+ *	Return 1  if source and dest files are not identical
  */
 int
 csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
 {
-    const char *sfile;
-    char *dcode;
-    int sdirlen;
+    char *scode, *dcode;
     int r;
     CSUMNode *node;
 
-    r = -1;
-
-    if ((sfile = strrchr(spath, '/')) != NULL)
-	++sfile;
-    else
-	sfile = spath;
-    sdirlen = sfile - spath;
-
-    csum_cache(spath, sdirlen);
-
-    node = csum_lookup(sfile);
+    node = csum_lookup(spath);
 
     /*
-     * If dpath == NULL, we are force-updating the source .CSUM* files
+     * The checksum file is used as a cache.
      */
-
-    if (dpath == NULL) {
-	char *scode = csum_file(algo, spath, NULL, 0);
-
-	r = 0;
-	if (node->csum_Code == NULL) {
-	    r = -1;
-	    node->csum_Code = scode;
-	    CSUMSCacheDirty = 1;
-	} else if (strcmp(scode, node->csum_Code) != 0) {
-	    r = -1;
-	    free(node->csum_Code);
-	    node->csum_Code = scode;
-	    CSUMSCacheDirty = 1;
-	} else {
-	    free(scode);
-	}
-	return(r);
-    }
-
-    /*
-     * Otherwise the .CSUM* file is used as a cache.
-     */
-
     if (node->csum_Code == NULL) {
-	node->csum_Code = csum_file(algo, spath, NULL, 0);
+	scode = csum_file(algo, spath, NULL, 0);
+	if (scode == NULL)
+	    return (-1);
+
+	node->csum_Code = scode;
 	CSUMSCacheDirty = 1;
     }
 
     dcode = csum_file(algo, dpath, NULL, 1);
-    if (dcode) {
-	if (strcmp(node->csum_Code, dcode) == 0) {
-	    r = 0;
-	} else {
-	    char *scode = csum_file(algo, spath, NULL, 0);
+    if (dcode == NULL)
+	return (-1);
 
-	    if (strcmp(node->csum_Code, scode) == 0) {
-		    free(scode);
-	    } else {
-		    free(node->csum_Code);
-		    node->csum_Code = scode;
-		    CSUMSCacheDirty = 1;
-		    if (strcmp(node->csum_Code, dcode) == 0)
-			r = 0;
-	    }
+    r = 0;
+    if (strcmp(node->csum_Code, dcode) != 0) {
+	r = 1;
+
+	scode = csum_file(algo, spath, NULL, 0);
+	if (scode == NULL)
+	    return (-1);
+
+	if (strcmp(node->csum_Code, scode) == 0) {
+	    free(scode);
+	} else {
+	    free(node->csum_Code);
+	    node->csum_Code = scode;
+	    CSUMSCacheDirty = 1;
+	    if (strcmp(node->csum_Code, dcode) == 0)
+		r = 0;
 	}
-	free(dcode);
     }
+    free(dcode);
+
     return(r);
 }
 

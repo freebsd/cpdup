@@ -1120,15 +1120,19 @@ relink:
 	 */
 #ifndef NOCHECKSUM
 	if (UseCsumOpt && S_ISREG(stat1->st_mode)) {
-	    mres = csum_check(CsumAlgo, spath, NULL);
+	    mres = csum_update(CsumAlgo, spath);
 
-	    if (VerboseOpt > 1) {
-		if (mres < 0)
-		    logstd("%-32s md5-update\n", (dpath) ? dpath : spath);
-		else
-		    logstd("%-32s md5-ok\n", (dpath) ? dpath : spath);
-	    } else if (!QuietOpt && mres < 0) {
-		logstd("%-32s md5-update\n", (dpath) ? dpath : spath);
+	    if (mres < 0) {
+		logerr("%-32s checksum-CHECK-FAILED\n", spath);
+	    } else {
+		if (VerboseOpt > 1) {
+		    if (mres > 0)
+			logstd("%-32s checksum-update\n", spath);
+		    else
+			logstd("%-32s checksum-ok\n", spath);
+		} else if (!QuietOpt && mres > 0) {
+		    logstd("%-32s checksum-update\n", spath);
+		}
 	    }
 	}
 #endif
