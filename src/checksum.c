@@ -70,6 +70,9 @@ csum_flush(void)
 		}
 	    }
 	    fclose(fo);
+	} else {
+	    logerr("Error writing checksum cache (%s): %s\n",
+		   CSUMSCache, strerror(errno));
 	}
     }
 
@@ -119,6 +122,9 @@ csum_cache(const char *spath, int sdirlen)
     if ((fi = fopen(CSUMSCache, "r")) != NULL) {
 	csum_load(fi);
 	fclose(fi);
+    } else if (errno != ENOENT) {
+	logerr("Error reading checksum cache (%s): %s\n",
+	       CSUMSCache, strerror(errno));
     }
 }
 
