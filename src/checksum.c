@@ -44,8 +44,8 @@ typedef struct CSUMNode {
 
 static CSUMNode *csum_lookup(const char *spath);
 static void csum_cache(const char *spath, int sdirlen);
+static void csum_load(FILE *fi);
 static int csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target);
-static int fextract(FILE *fi, int *pc, char *buf, size_t len);
 
 static char *CSUMSCache;		/* cache source directory name */
 static CSUMNode *CSUMBase;
@@ -108,99 +108,16 @@ csum_cache(const char *spath, int sdirlen)
     /*
      * Different cache, flush old cache
      */
-
     if (CSUMSCache != NULL)
 	csum_flush();
 
     /*
-     * Create new cache
+     * Create new cache and load data if exists
      */
-
     CSUMSCacheDirLen = sdirlen;
     CSUMSCache = mprintf("%*.*s%s", sdirlen, sdirlen, spath, CsumCacheFile);
-
-    /*
-     * Line format: "<code> <name_len> <name>"
-     * - code: hex-encoded digest
-     * - name_len: 10-based integer indicating the length of the file name
-     * - name: the file name (may contain special characters)
-     * Example: "359d5608935488c8d0af7eb2a350e2f8 7 cpdup.c"
-     */
     if ((fi = fopen(CSUMSCache, "r")) != NULL) {
-	CSUMNode **pnode = &CSUMBase;
-	CSUMNode *node;
-	int c, n, nlen;
-	char nbuf[sizeof("2147483647")];
-	char *endp;
-
-	while ((c = fgetc(fi)) != EOF) {
-	    node = malloc(sizeof(CSUMNode));
-	    if (node == NULL)
-		fatal("out of memory");
-
-	    bzero(node, sizeof(CSUMNode));
-
-	    if (fextract(fi, &c, node->csum_Code, sizeof(node->csum_Code)) != 0) {
-		logerr("Error parsing checksum cache (%s): invalid digest code\n",
-		       CSUMSCache);
-		goto skip;
-	    }
-
-	    c = fgetc(fi);
-	    if (fextract(fi, &c, nbuf, sizeof(nbuf)) != 0) {
-		logerr("Error parsing checksum cache (%s): invalid length\n",
-		       CSUMSCache);
-		goto skip;
-	    }
-	    nlen = strtol(nbuf, &endp, 10);
-	    if (*endp != '\0' || nlen == 0) {
-		logerr("Error parsing checksum cache (%s): invalid length\n",
-		       CSUMSCache);
-		goto skip;
-	    }
-
-	    if ((node->csum_Name = malloc(nlen + 1)) == NULL)
-		fatal("out of memory");
-	    for (n = 0; n < nlen; n++) {
-		c = fgetc(fi);
-		node->csum_Name[n] = c;
-		if (c == EOF) {
-		    logerr("Error parsing checksum cache (%s): invalid filename\n",
-			   CSUMSCache);
-		    goto skip;
-		}
-	    }
-	    node->csum_Name[n] = '\0';
-
-	    c = fgetc(fi);
-	    if (c != '\n' && c != EOF) {
-		logerr("Error parsing checksum cache (%s): trailing garbage\n",
-		       CSUMSCache);
-		goto skip;
-	    }
-
-	    node->csum_Accessed = 1;
-	    *pnode = node;
-	    pnode = &node->csum_Next;
-
-	    if (SummaryOpt) {
-		CountSourceReadBytes += strlen(node->csum_Code) + strlen(nbuf) +
-		    nlen + 1;
-	    }
-	    if (c == EOF)
-		break;
-	    continue;
-
-	skip:
-	    if (node->csum_Name != NULL)
-		free(node->csum_Name);
-	    free(node);
-	    while (c != EOF && c != '\n')
-		c = fgetc(fi);
-	    if (c == EOF)
-		break;
-	}
-
+	csum_load(fi);
 	fclose(fi);
     }
 }
@@ -399,19 +316,16 @@ err:
 }
 
 static int
-fextract(FILE *fi, int *pc, char *buf, size_t len)
+get_field(FILE *fi, int c, char *buf, size_t len)
 {
     size_t n;
-    int c;
 
     n = 0;
-    c = *pc;
 
     while (c != EOF) {
 	if (c == ' ') {
-	    *pc = c;
 	    buf[n] = '\0';
-	    return (0);
+	    return (c);
 	}
 
 	buf[n++] = c;
@@ -421,6 +335,93 @@ fextract(FILE *fi, int *pc, char *buf, size_t len)
 	c = fgetc(fi);
     }
 
-    *pc = c;
-    return (-1);
+    return (c);
+}
+
+static void
+csum_load(FILE *fi)
+{
+    CSUMNode **pnode = &CSUMBase;
+    CSUMNode *node;
+    int c, n, nlen;
+    char nbuf[sizeof("2147483647")];
+    char *endp;
+
+    /*
+     * Line format: "<code> <name_len> <name>"
+     * - code: hex-encoded digest
+     * - name_len: 10-based integer indicating the length of the file name
+     * - name: the file name (may contain special characters)
+     * Example: "359d5608935488c8d0af7eb2a350e2f8 7 cpdup.c"
+     */
+    c = fgetc(fi);
+    while (c != EOF) {
+	node = malloc(sizeof(CSUMNode));
+	if (node == NULL)
+	    fatal("out of memory");
+	memset(node, 0, sizeof(CSUMNode));
+
+	c = get_field(fi, c, node->csum_Code, sizeof(node->csum_Code));
+	if (c != ' ') {
+	    logerr("Error parsing checksum cache (%s): invalid digest code (%c)\n",
+		   CSUMSCache, c);
+	    goto next;
+	}
+
+	c = fgetc(fi);
+	c = get_field(fi, c, nbuf, sizeof(nbuf));
+	if (c != ' ') {
+	    logerr("Error parsing checksum cache (%s): invalid length (%c)\n",
+		   CSUMSCache, c);
+	    goto next;
+	}
+	nlen = (int)strtol(nbuf, &endp, 10);
+	if (*endp != '\0' || nlen == 0) {
+	    logerr("Error parsing checksum cache (%s): invalid length (%s)\n",
+		   CSUMSCache, nbuf);
+	    goto next;
+	}
+
+	if ((node->csum_Name = malloc(nlen + 1)) == NULL)
+	    fatal("out of memory");
+	node->csum_Name[nlen] = '\0';
+	for (n = 0; n < nlen; n++) {
+	    c = fgetc(fi);
+	    if (c == EOF) {
+		logerr("Error parsing checksum cache (%s): invalid filename\n",
+		       CSUMSCache);
+		goto next;
+	    }
+	    node->csum_Name[n] = c;
+	}
+
+	c = fgetc(fi);
+	if (c != '\n' && c != EOF) {
+	    logerr("Error parsing checksum cache (%s): trailing garbage (%c)\n",
+		   CSUMSCache, c);
+	    while (c != EOF && c != '\n')
+		c = fgetc(fi);
+	}
+	if (c == '\n')
+	    c = fgetc(fi);
+
+	node->csum_Accessed = 1;
+	*pnode = node;
+	pnode = &node->csum_Next;
+
+	if (SummaryOpt) {
+	    CountSourceReadBytes += strlen(node->csum_Code) + strlen(nbuf) +
+		nlen + 1;
+	}
+	continue;
+
+    next:
+	if (node->csum_Name != NULL)
+	    free(node->csum_Name);
+	free(node);
+	while (c != EOF && c != '\n')
+	    c = fgetc(fi);
+	if (c == '\n')
+	    c = fgetc(fi);
+    }
 }
