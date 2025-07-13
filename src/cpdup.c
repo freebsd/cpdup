@@ -460,7 +460,7 @@ main(int ac, char **av)
 	    (long long)CountTargetReadBytes,
 	    (long long)CountWriteBytes,
 	    ((double)CountSourceBytes * 2.0) / ((double)(CountSourceReadBytes + CountTargetReadBytes + CountWriteBytes)));
- 	logstd("%lld source items, %lld items copied, %lld items linked, "
+	logstd("%lld source items, %lld items copied, %lld items linked, "
 	       "%lld things deleted\n",
 	    (long long)CountSourceItems,
 	    (long long)CountCopiedItems,
@@ -565,14 +565,14 @@ OwnerMatch(struct stat *st1, struct stat *st2)
 static int
 FlagsMatch(struct stat *st1, struct stat *st2)
 {
-/*
- * Ignore UF_ARCHIVE.  It gets set automatically by the filesystem, for
- * filesystems that support it.  If the destination filesystem supports it, but
- * it's cleared on the source file, then multiple invocations of cpdup would
- * all try to copy the file because the flags wouldn't match.
- *
- * When unpriveleged, ignore flags we can't set
- */
+    /*
+     * Ignore UF_ARCHIVE.  It gets set automatically by the filesystem, for
+     * filesystems that support it.  If the destination filesystem supports it,
+     * but it's cleared on the source file, then multiple invocations of cpdup
+     * would all try to copy the file because the flags wouldn't match.
+     *
+     * When unpriveleged, ignore flags we can't set
+     */
     u_long ignored = DstRootPrivs ? 0 : SF_SETTABLE;
 
 #ifdef UF_ARCHIVE
@@ -592,7 +592,7 @@ hltlookup(struct stat *stp)
     n = stp->st_ino & HLMASK;
 
     for (hl = hltable[n]; hl; hl = hl->next) {
-        if (hl->ino == stp->st_ino) {
+	if (hl->ino == stp->st_ino) {
 	    ++hl->refs;
 	    return hl;
 	}
@@ -828,13 +828,12 @@ DoCopy(copy_info_t info, struct stat *stat1, int depth)
             if (xlink(hln->name, dpath, stat1->st_flags) < 0) {
 		int tryrelink = (errno == EMLINK);
 		logerr("%-32s hardlink: unable to link to %s: %s\n",
-		    (dpath ? dpath : spath), hln->name, strerror(errno)
-		);
+		       (dpath ? dpath : spath), hln->name, strerror(errno));
                 hltdelete(hln);
                 hln = NULL;
 		if (tryrelink) {
 		    logerr("%-20s hardlink: will attempt to copy normally\n",
-			(dpath ? dpath : spath));
+			   (dpath ? dpath : spath));
 		    goto relink;
 		}
 		++r;
@@ -845,10 +844,8 @@ DoCopy(copy_info_t info, struct stat *stat1, int depth)
 		}
                 if (r == 0) {
 		    if (VerboseOpt) {
-			logstd("%-32s hardlink: %s\n",
-			    (dpath ? dpath : spath),
-			    (st2Valid ? "relinked" : "linked")
-			);
+			logstd("%-32s hardlink: %s\n", (dpath ? dpath : spath),
+			       (st2Valid ? "relinked" : "linked"));
 		    }
 		    CountSourceItems++;
 		    CountCopiedItems++;
@@ -973,9 +970,9 @@ relink:
 		    skipdir = 1;
 		}
 		if (hc_lstat(&DstHost, dpath, &st2) != 0) {
-		    if (NotForRealOpt == 0)
-			    logerr("%s: lstat of newly made dir failed: %s\n",
-				   (dpath ? dpath : spath), strerror(errno));
+		    if (!NotForRealOpt)
+			logerr("%s: lstat of newly made dir failed: %s\n",
+			       (dpath ? dpath : spath), strerror(errno));
 		    st2Valid = 0;
 		    r = 1;
 		    skipdir = 1;
@@ -1146,14 +1143,14 @@ relink:
 	int fd2;
 
 	if (st2Valid)
-		path = mprintf("%s.tmp%d", dpath, (int)getpid());
+	    path = mprintf("%s.tmp%d", dpath, (int)getpid());
 	else
-		path = mprintf("%s", dpath);
+	    path = mprintf("%s", dpath);
 
+#ifndef NOCHECKSUM
 	/*
 	 * Handle check failure message.
 	 */
-#ifndef NOCHECKSUM
 	if (mres < 0)
 	    logerr("%-32s checksum-CHECK-FAILED\n", (dpath) ? dpath : spath);
 #endif
@@ -1549,11 +1546,11 @@ ScanDir(List *list, struct HostConf *host, const char *path,
 	 * ignore . and ..
 	 */
 	if (strcmp(den->d_name, ".") != 0 && strcmp(den->d_name, "..") != 0) {
-	     if (UseCpFile && UseCpFile[0] == '/') {
-		 if (CheckList(list, path, den->d_name) == 0)
-			continue;
-	     }
-	     AddList(list, den->d_name, n, statptr);
+	    if (UseCpFile && UseCpFile[0] == '/') {
+		if (CheckList(list, path, den->d_name) == 0)
+		    continue;
+	    }
+	    AddList(list, den->d_name, n, statptr);
 	}
     }
     hc_closedir(host, dir);
@@ -1823,7 +1820,6 @@ YesNo(const char *path)
  *	destination and rename again.  If that fails too, try to
  *	set the flags back the way they were and give up.
  */
-
 static int
 xrename(const char *src, const char *dst, u_long flags)
 {

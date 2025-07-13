@@ -58,15 +58,12 @@ csum_flush(void)
     CSUMNode *node;
     FILE *fo;
 
-    if (CSUMSCacheDirty && CSUMSCache && !NotForRealOpt) {
+    if (CSUMSCacheDirty && CSUMSCache != NULL && !NotForRealOpt) {
 	if ((fo = fopen(CSUMSCache, "w")) != NULL) {
 	    for (node = CSUMBase; node; node = node->csum_Next) {
 		if (node->csum_Accessed && node->csum_Code[0] != '\0') {
-		    fprintf(fo, "%s %zu %s\n",
-			node->csum_Code,
-			strlen(node->csum_Name),
-			node->csum_Name
-		    );
+		    fprintf(fo, "%s %zu %s\n", node->csum_Code,
+			    strlen(node->csum_Name), node->csum_Name);
 		}
 	    }
 	    fclose(fo);
@@ -78,7 +75,7 @@ csum_flush(void)
 
     CSUMSCacheDirty = 0;
 
-    if (CSUMSCache) {
+    if (CSUMSCache != NULL) {
 	while ((node = CSUMBase) != NULL) {
 	    CSUMBase = node->csum_Next;
 
@@ -99,9 +96,8 @@ csum_cache(const char *spath, int sdirlen)
     /*
      * Already cached
      */
-
     if (
-	CSUMSCache &&
+	CSUMSCache != NULL &&
 	sdirlen == CSUMSCacheDirLen &&
 	strncmp(spath, CSUMSCache, sdirlen) == 0
     ) {
