@@ -154,7 +154,7 @@ csum_lookup(const char *spath)
 	if ((node = malloc(sizeof(CSUMNode))) == NULL)
 	    fatal("out of memory");
 
-	bzero(node, sizeof(CSUMNode));
+	memset(node, 0, sizeof(CSUMNode));
 	node->csum_Name = strdup(sfile);
 	node->csum_Next = CSUMBase;
 	CSUMBase = node;
@@ -183,7 +183,7 @@ csum_update(const EVP_MD *algo, const char *spath)
 	r = 0;
 	if (strcmp(scode, node->csum_Code) != 0) {
 	    r = 1;
-	    bcopy(scode, node->csum_Code, sizeof(scode));
+	    memcpy(node->csum_Code, scode, sizeof(scode));
 	    CSUMSCacheDirty = 1;
 	}
     } else {
@@ -222,7 +222,7 @@ csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
 	     */
 	    if (csum_file(algo, spath, scode, 0 /* is_target */) == 0) {
 		if (strcmp(node->csum_Code, scode) != 0) {
-		    bcopy(scode, node->csum_Code, sizeof(scode));
+		    memcpy(node->csum_Code, scode, sizeof(scode));
 		    CSUMSCacheDirty = 1;
 		    if (strcmp(node->csum_Code, dcode) == 0)
 			r = 0;
