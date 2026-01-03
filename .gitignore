@@ -2,6 +2,7 @@
 *.swp
 *.orig
 *.bak
+*.d
 *.o
 *.so
 *.gz
@@ -9,5 +10,8 @@
 *.rpm
 *.deb
 *.html
+*.diff
+*.patch
+*.rej
 
 /cpdup

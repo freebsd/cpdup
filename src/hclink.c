@@ -1,9 +1,37 @@
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Copyright (c) 1997-2010 by Matthew Dillon, Dima Ruban, and Oliver Fromme.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ * 3. Neither the name of The DragonFly Project nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific, prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
+ * COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
 /*
- * HCLINK.C
- *
- * This module implements a simple remote control protocol
- *
- * $DragonFly: src/bin/cpdup/hclink.c,v 1.10 2008/05/24 17:21:36 dillon Exp $
+ * This module implements a simple remote control protocol.
  */
 
 #include "cpdup.h"
@@ -89,9 +117,9 @@ hcc_slave(int fdin, int fdout, struct HCDesc *descs, int count)
     int i;
     int r;
 
-    bzero(&hcslave, sizeof(hcslave));
-    bzero(&trans, sizeof(trans));
-    bzero(dispatch, sizeof(dispatch));
+    memset(&hcslave, 0, sizeof(hcslave));
+    memset(&trans, 0, sizeof(trans));
+    memset(dispatch, 0, sizeof(dispatch));
     for (i = 0; i < count; ++i) {
 	struct HCDesc *desc = &descs[i];
 	assert(desc->cmd >= 0 && desc->cmd < 256);
@@ -184,7 +212,7 @@ hcc_read_command(struct HostConf *hc, hctransaction_t trans)
     assert(tmp.bytes >= (int)sizeof(tmp) && tmp.bytes < HC_BUFSIZE);
 
     trans->swap = need_swap;
-    bcopy(&tmp, trans->rbuf, n);
+    memcpy(trans->rbuf, &tmp, n);
     aligned_bytes = HCC_ALIGN(tmp.bytes);
 
     while (n < aligned_bytes) {
@@ -330,7 +358,7 @@ hcc_leaf_string(hctransaction_t trans, int16_t leafid, const char *str)
     item->leafid = leafid;
     item->reserved = 0;
     item->bytes = sizeof(*item) + bytes;
-    bcopy(str, item + 1, bytes);
+    memcpy(item + 1, str, bytes);
     trans->windex = HCC_ALIGN(trans->windex + item->bytes);
 }
 
@@ -344,7 +372,7 @@ hcc_leaf_data(hctransaction_t trans, int16_t leafid, const void *ptr, int bytes)
     item->leafid = leafid;
     item->reserved = 0;
     item->bytes = sizeof(*item) + bytes;
-    bcopy(ptr, item + 1, bytes);
+    memcpy(item + 1, ptr, bytes);
     trans->windex = HCC_ALIGN(trans->windex + item->bytes);
 }
 
@@ -479,14 +507,14 @@ hcc_nextitem(hctransaction_t trans, struct HCHead *head, struct HCLeaf *item)
 	item->leafid = hc_bswap16(item->leafid);
 	item->bytes  = hc_bswap32(item->bytes);
 	switch (item->leafid & LCF_TYPEMASK) {
-	    case LCF_INT32:
-		i32ptr = (void *)(item + 1);
-		*i32ptr = hc_bswap32(*i32ptr);
-		break;
-	    case LCF_INT64:
-		i64ptr = (void *)(item + 1);
-		*i64ptr = hc_bswap64(*i64ptr);
-		break;
+	case LCF_INT32:
+	    i32ptr = (void *)(item + 1);
+	    *i32ptr = hc_bswap32(*i32ptr);
+	    break;
+	case LCF_INT64:
+	    i64ptr = (void *)(item + 1);
+	    *i64ptr = hc_bswap64(*i64ptr);
+	    break;
 	}
     }
     assert(head->bytes >= offset + (int)sizeof(*item));
@@ -537,7 +565,7 @@ hcc_debug_dump(hctransaction_t trans, struct HCHead *head)
     fprintf(stderr, "\n");
     FOR_EACH_ITEM(item, trans, head) {
 	fprintf(stderr, "    ITEM %04x DATA ", item->leafid);
-	switch(item->leafid & LCF_TYPEMASK) {
+	switch (item->leafid & LCF_TYPEMASK) {
 	case LCF_INT32:
 	    fprintf(stderr, "int32 %d\n", HCC_INT32(item));
 	    break;
