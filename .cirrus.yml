@@ -4,10 +4,21 @@ env:
 
 build_task:
   matrix:
-    freebsd_instance:
-      image_family: freebsd-14-1
-    freebsd_instance:
-      image_family: freebsd-13-4
+    - name: 15.0-STABLE (UFS)
+      freebsd_instance:
+        image_family: freebsd-15-0-amd64-ufs-snap
+    - name: 15.0-RELEASE (UFS)
+      freebsd_instance:
+        image_family: freebsd-15-0-amd64-ufs
+    - name: 15.0-RELEASE (ZFS)
+      freebsd_instance:
+        image_family: freebsd-15-0-amd64-zfs
+    - name: 14.3-RELEASE
+      freebsd_instance:
+        image_family: freebsd-14-3
+    - name: 13.5-RELEASE
+      freebsd_instance:
+        image_family: freebsd-13-5
   build_script:
   - make -f Makefile.bsd
   install_script:
