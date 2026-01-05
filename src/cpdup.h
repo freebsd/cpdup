@@ -1,5 +1,34 @@
-/*
- * CPDUP.H
+/*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Copyright (c) 1997-2010 by Matthew Dillon, Dima Ruban, and Oliver Fromme.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ * 3. Neither the name of The DragonFly Project nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific, prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
+ * COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  */
 
 #include <sys/param.h>
@@ -14,7 +43,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <strings.h>
 #include <errno.h>
 #include <unistd.h>
 #include <utime.h>
@@ -27,9 +55,9 @@
 #include <openssl/evp.h>
 #endif
 
+#ifdef __linux
+
 /*
- * See ./mklinux script
- *
  * This is a horrible hack.  lchmod also seems to be missing
  * on the Debian system I am testing compatibility on (which will
  * break the symlink handling code), so not sure what to do about
@@ -37,22 +65,24 @@
  *
  * XXX TODO
  */
-#ifdef __linux
-
 #define lchmod	chmod	/* horrible hack */
 
-size_t strlcpy(char *dst, const char *src, size_t size);
-
-#endif
+#endif /* __linux */
 
 #define VERSION	"1.0.0"
 #define AUTHORS	"Matt Dillon, Dima Ruban, Oliver Fromme & Martin Matuska"
 
 #if !defined(__unused)
 #if (defined(__GNUC__) || defined(__clang__))
-#define __unused __attribute__((unused))
+#define __unused __attribute__((__unused__))
 #else
 #define __unused
+#endif
+#endif
+
+#if !defined(__aligned)
+#if (defined(__GNUC__) || defined(__clang__))
+#define __aligned(n) __attribute__((__aligned__(n)))
 #endif
 #endif
 
@@ -64,21 +94,26 @@ size_t strlcpy(char *dst, const char *src, size_t size);
 #endif
 #endif
 
+#ifndef __printflike
+#define __printflike(a,b) \
+	__attribute__((__nonnull__(a), __format__(__printf__, a, b)))
+#endif
+
 #ifndef __printf0like
-#define __printf0like(a,b) __attribute__((__format__ (__printf__, a, b)))
+#define __printf0like(a,b) __attribute__((__format__(__printf__, a, b)))
 #endif
 
 void logstd(const char *ctl, ...) __printflike(1, 2);
 void logerr(const char *ctl, ...) __printflike(1, 2);
 char *mprintf(const char *ctl, ...) __printflike(1, 2);
 void fatal(const char *ctl, ...) __dead2 __printf0like(1, 2);
-char *fextract(FILE *fi, int n, int *pc, int skip);
 
 int16_t hc_bswap16(int16_t var);
 int32_t hc_bswap32(int32_t var);
 int64_t hc_bswap64(int64_t var);
 
 #ifndef NOCHECKSUM
+int csum_update(const EVP_MD *algo, const char *spath);
 int csum_check(const EVP_MD *algo, const char *spath, const char *dpath);
 void csum_flush(void);
 #endif
@@ -122,4 +157,4 @@ void debug_free(void *ptr);
 
 #define malloc(bytes)	debug_malloc(bytes, __FILE__, __LINE__)
 #define free(ptr)	debug_free(ptr)
-#endif
+#endif /* DEBUG_MALLOC */

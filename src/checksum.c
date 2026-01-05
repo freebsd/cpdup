@@ -1,9 +1,34 @@
 /*-
- * checksum.c
+ * SPDX-License-Identifier: BSD-3-Clause
  *
- * (c) Copyright 1997-1999 by Matthew Dillon and Dima Ruban.  Permission to
- *     use and distribute based on the FreeBSD copyright.  Supplied as-is,
- *     USE WITH EXTREME CAUTION.
+ * Copyright (c) 1997-2010 by Matthew Dillon, Dima Ruban, and Oliver Fromme.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ * 3. Neither the name of The DragonFly Project nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific, prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
+ * COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  */
 
 #include "cpdup.h"
@@ -13,13 +38,14 @@
 typedef struct CSUMNode {
     struct CSUMNode *csum_Next;
     char *csum_Name;
-    char *csum_Code;
+    char csum_Code[EVP_MAX_MD_SIZE * 2 + 1]; /* hex-encoded digest */
     int csum_Accessed;
 } CSUMNode;
 
-static CSUMNode *csum_lookup(const char *sfile);
+static CSUMNode *csum_lookup(const char *spath);
 static void csum_cache(const char *spath, int sdirlen);
-static char *doCsumFile(const EVP_MD *algo, const char *filename, char *buf, int is_target);
+static void csum_load(FILE *fi);
+static int csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target);
 
 static char *CSUMSCache;		/* cache source directory name */
 static CSUMNode *CSUMBase;
@@ -29,36 +55,31 @@ static int CSUMSCacheDirty;
 void
 csum_flush(void)
 {
-    if (CSUMSCacheDirty && CSUMSCache && NotForRealOpt == 0) {
-	FILE *fo;
+    CSUMNode *node;
+    FILE *fo;
 
+    if (CSUMSCacheDirty && CSUMSCache != NULL && !NotForRealOpt) {
 	if ((fo = fopen(CSUMSCache, "w")) != NULL) {
-	    CSUMNode *node;
-
 	    for (node = CSUMBase; node; node = node->csum_Next) {
-		if (node->csum_Accessed && node->csum_Code) {
-		    fprintf(fo, "%s %zu %s\n",
-			node->csum_Code,
-			strlen(node->csum_Name),
-			node->csum_Name
-		    );
+		if (node->csum_Accessed && node->csum_Code[0] != '\0') {
+		    fprintf(fo, "%s %zu %s\n", node->csum_Code,
+			    strlen(node->csum_Name), node->csum_Name);
 		}
 	    }
 	    fclose(fo);
+	} else {
+	    logerr("Error writing checksum cache (%s): %s\n",
+		   CSUMSCache, strerror(errno));
 	}
     }
 
     CSUMSCacheDirty = 0;
 
-    if (CSUMSCache) {
-	CSUMNode *node;
-
+    if (CSUMSCache != NULL) {
 	while ((node = CSUMBase) != NULL) {
 	    CSUMBase = node->csum_Next;
 
-	    if (node->csum_Code)
-		free(node->csum_Code);
-	    if (node->csum_Name)
+	    if (node->csum_Name != NULL)
 		free(node->csum_Name);
 	    free(node);
 	}
@@ -75,9 +96,8 @@ csum_cache(const char *spath, int sdirlen)
     /*
      * Already cached
      */
-
     if (
-	CSUMSCache &&
+	CSUMSCache != NULL &&
 	sdirlen == CSUMSCacheDirLen &&
 	strncmp(spath, CSUMSCache, sdirlen) == 0
     ) {
@@ -87,108 +107,32 @@ csum_cache(const char *spath, int sdirlen)
     /*
      * Different cache, flush old cache
      */
-
     if (CSUMSCache != NULL)
 	csum_flush();
 
     /*
-     * Create new cache
+     * Create new cache and load data if exists
      */
-
     CSUMSCacheDirLen = sdirlen;
     CSUMSCache = mprintf("%*.*s%s", sdirlen, sdirlen, spath, CsumCacheFile);
-
     if ((fi = fopen(CSUMSCache, "r")) != NULL) {
-	CSUMNode **pnode = &CSUMBase;
-	int c;
-
-	c = fgetc(fi);
-	while (c != EOF) {
-	    CSUMNode *node = *pnode = malloc(sizeof(CSUMNode));
-	    char *s;
-	    int nlen;
-
-	    nlen = 0;
-
-	    if (pnode == NULL || node == NULL) {
-		fprintf(stderr, "out of memory\n");
-		exit(EXIT_FAILURE);
-	    }
-
-	    bzero(node, sizeof(CSUMNode));
-	    node->csum_Code = fextract(fi, -1, &c, ' ');
-	    node->csum_Accessed = 1;
-	    if ((s = fextract(fi, -1, &c, ' ')) != NULL) {
-		nlen = strtol(s, NULL, 0);
-		free(s);
-	    }
-	    /*
-	     * extracting csum_Name - name may contain embedded control
-	     * characters.
-	     */
-	    CountSourceReadBytes += nlen+1;
-	    node->csum_Name = fextract(fi, nlen, &c, EOF);
-	    if (c != '\n') {
-		fprintf(stderr, "Error parsing CSUM Cache: %s (%c)\n", CSUMSCache, c);
-		while (c != EOF && c != '\n')
-		    c = fgetc(fi);
-	    }
-	    if (c != EOF)
-		c = fgetc(fi);
-	    pnode = &node->csum_Next;
-	}
+	csum_load(fi);
 	fclose(fi);
+    } else if (errno != ENOENT) {
+	logerr("Error reading checksum cache (%s): %s\n",
+	       CSUMSCache, strerror(errno));
     }
 }
 
 /*
  * csum_lookup:	lookup/create csum entry
  */
-
 static CSUMNode *
-csum_lookup(const char *sfile)
-{
-    CSUMNode **pnode;
-    CSUMNode *node;
-
-    for (pnode = &CSUMBase; (node = *pnode) != NULL; pnode = &node->csum_Next) {
-	if (strcmp(sfile, node->csum_Name) == 0) {
-	    break;
-	}
-    }
-    if (node == NULL) {
-
-	if ((node = *pnode = malloc(sizeof(CSUMNode))) == NULL) {
-		fprintf(stderr,"out of memory\n");
-		exit(EXIT_FAILURE);
-	}
-
-	bzero(node, sizeof(CSUMNode));
-	node->csum_Name = strdup(sfile);
-    }
-    node->csum_Accessed = 1;
-    return(node);
-}
-
-/*
- * csum_check:  check CSUM against file
- *
- *	Return -1 if check failed
- *	Return 0  if check succeeded
- *
- * dpath can be NULL, in which case we are force-updating
- * the source CSUM.
- */
-int
-csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
+csum_lookup(const char *spath)
 {
     const char *sfile;
-    char *dcode;
     int sdirlen;
-    int r;
     CSUMNode *node;
-
-    r = -1;
 
     if ((sfile = strrchr(spath, '/')) != NULL)
 	++sfile;
@@ -198,67 +142,107 @@ csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
 
     csum_cache(spath, sdirlen);
 
-    node = csum_lookup(sfile);
+    for (node = CSUMBase; node != NULL; node = node->csum_Next) {
+	if (strcmp(sfile, node->csum_Name) == 0)
+	    break;
+    }
+    if (node == NULL) {
+	if ((node = malloc(sizeof(CSUMNode))) == NULL)
+	    fatal("out of memory");
 
-    /*
-     * If dpath == NULL, we are force-updating the source .CSUM* files
-     */
+	memset(node, 0, sizeof(CSUMNode));
+	node->csum_Name = strdup(sfile);
+	node->csum_Next = CSUMBase;
+	CSUMBase = node;
+    }
+    node->csum_Accessed = 1;
+    return(node);
+}
 
-    if (dpath == NULL) {
-	char *scode = doCsumFile(algo, spath, NULL, 0);
+/*
+ * csum_update:	force update the source checksum file.
+ *
+ *	Return -1 if failed
+ *	Return 0  if up-to-date
+ *	Return 1  if updated
+ */
+int
+csum_update(const EVP_MD *algo, const char *spath)
+{
+    char scode[EVP_MAX_MD_SIZE * 2 + 1];
+    int r;
+    CSUMNode *node;
 
+    node = csum_lookup(spath);
+
+    if (csum_file(algo, spath, scode, 0 /* is_target */) == 0) {
 	r = 0;
-	if (node->csum_Code == NULL) {
-	    r = -1;
-	    node->csum_Code = scode;
+	if (strcmp(scode, node->csum_Code) != 0) {
+	    r = 1;
+	    memcpy(node->csum_Code, scode, sizeof(scode));
 	    CSUMSCacheDirty = 1;
-	} else if (strcmp(scode, node->csum_Code) != 0) {
-	    r = -1;
-	    free(node->csum_Code);
-	    node->csum_Code = scode;
-	    CSUMSCacheDirty = 1;
-	} else {
-	    free(scode);
 	}
-	return(r);
+    } else {
+	r = -1;
     }
+
+    return (r);
+}
+
+/*
+ * csum_check:	check checksum against file
+ *
+ *	Return -1 if check failed
+ *	Return 0  if source and dest files are identical
+ *	Return 1  if source and dest files are not identical
+ */
+int
+csum_check(const EVP_MD *algo, const char *spath, const char *dpath)
+{
+    char scode[EVP_MAX_MD_SIZE * 2 + 1];
+    char dcode[EVP_MAX_MD_SIZE * 2 + 1];
+    int r;
+    CSUMNode *node;
+
+    node = csum_lookup(spath);
 
     /*
-     * Otherwise the .CSUM* file is used as a cache.
+     * The checksum file is used as a cache.
      */
-
-    if (node->csum_Code == NULL) {
-	node->csum_Code = doCsumFile(algo, spath, NULL, 0);
-	CSUMSCacheDirty = 1;
-    }
-
-    dcode = doCsumFile(algo, dpath, NULL, 1);
-    if (dcode) {
-	if (strcmp(node->csum_Code, dcode) == 0) {
-	    r = 0;
-	} else {
-	    char *scode = doCsumFile(algo, spath, NULL, 0);
-
-	    if (strcmp(node->csum_Code, scode) == 0) {
-		    free(scode);
-	    } else {
-		    free(node->csum_Code);
-		    node->csum_Code = scode;
+    if (csum_file(algo, dpath, dcode, 1 /* is_target */) == 0) {
+	r = 0;
+	if (strcmp(node->csum_Code, dcode) != 0) {
+	    r = 1;
+	    /*
+	     * Update the source digest code and recheck.
+	     */
+	    if (csum_file(algo, spath, scode, 0 /* is_target */) == 0) {
+		if (strcmp(node->csum_Code, scode) != 0) {
+		    memcpy(node->csum_Code, scode, sizeof(scode));
 		    CSUMSCacheDirty = 1;
 		    if (strcmp(node->csum_Code, dcode) == 0)
 			r = 0;
+		}
+	    } else {
+		r = -1;
 	    }
 	}
-	free(dcode);
+    } else {
+	r = -1;
     }
+
     return(r);
 }
 
-static char *
-csum_file(const EVP_MD *algo, const char *filename, char *buf)
+/*
+ * NOTE: buf will hold the hex-encoded digest and should have a size of
+ *       >= (EVP_MAX_MD_SIZE * 2 + 1).
+ */
+static int
+csum_file(const EVP_MD *algo, const char *filename, char *buf, int is_target)
 {
-    unsigned char digest[EVP_MAX_MD_SIZE];
     static const char hex[] = "0123456789abcdef";
+    unsigned char digest[EVP_MAX_MD_SIZE];
     EVP_MD_CTX *ctx;
     unsigned char buffer[4096];
     struct stat st;
@@ -266,52 +250,51 @@ csum_file(const EVP_MD *algo, const char *filename, char *buf)
     int fd, bytes;
     unsigned int i, csum_len;
 
+    ctx = NULL;
     fd = open(filename, O_RDONLY);
     if (fd < 0)
-	return NULL;
-    if (fstat(fd, &st) < 0) {
-	bytes = -1;
 	goto err;
-    }
+    if (fstat(fd, &st) < 0)
+	goto err;
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
     ctx = EVP_MD_CTX_new();
-    if (!EVP_DigestInit_ex(ctx, algo, NULL)) {
-	fprintf(stderr, "Unable to initialize CSUM digest.\n");
-	exit(1);
-    }
+#else
+    ctx = EVP_MD_CTX_create();
+#endif
+    if (ctx == NULL)
+	goto err;
+    if (!EVP_DigestInit_ex(ctx, algo, NULL))
+	goto err;
+
     size = st.st_size;
-    bytes = 0;
     while (size > 0) {
 	if ((size_t)size > sizeof(buffer))
 	     bytes = read(fd, buffer, sizeof(buffer));
 	else
 	     bytes = read(fd, buffer, size);
 	if (bytes < 0)
-	     break;
-	if (!EVP_DigestUpdate(ctx, buffer, bytes)) {
-	     EVP_MD_CTX_free(ctx);
-	     fprintf(stderr, "Unable to update CSUM digest.\n");
-	     exit(1);
-	}
+	     goto err;
+	if (!EVP_DigestUpdate(ctx, buffer, bytes))
+	     goto err;
 	size -= bytes;
     }
-
-err:
-    close(fd);
-    if (bytes < 0)
-	return NULL;
-
-    if (!EVP_DigestFinal(ctx, digest, &csum_len)) {
-	EVP_MD_CTX_free(ctx);
-	fprintf(stderr, "Unable to finalize CSUM digest.\n");
-	exit(1);
+    if (SummaryOpt) {
+	if (is_target)
+	    CountTargetReadBytes += st.st_size;
+	else
+	    CountSourceReadBytes += st.st_size;
     }
-    EVP_MD_CTX_free(ctx);
 
-    if (!buf)
-	buf = malloc(csum_len * 2 + 1);
-    if (!buf)
-	return NULL;
+    if (!EVP_DigestFinal(ctx, digest, &csum_len))
+	goto err;
+
+    close(fd);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    EVP_MD_CTX_free(ctx);
+#else
+    EVP_MD_CTX_destroy(ctx);
+#endif
 
     for (i = 0; i < csum_len; i++) {
 	buf[2*i] = hex[digest[i] >> 4];
@@ -319,21 +302,128 @@ err:
     }
     buf[csum_len * 2] = '\0';
 
-    return buf;
+    return (0);
+
+err:
+    if (fd >= 0)
+	close(fd);
+    if (ctx != NULL) {
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	EVP_MD_CTX_free(ctx);
+#else
+	EVP_MD_CTX_destroy(ctx);
+#endif
+    }
+    return (-1);
 }
 
-char *
-doCsumFile(const EVP_MD *algo, const char *filename, char *buf, int is_target)
+static int
+get_field(FILE *fi, int c, char *buf, size_t len)
 {
-    if (SummaryOpt) {
-	struct stat st;
-	if (stat(filename, &st) == 0) {
-	    uint64_t size = st.st_size;
-	    if (is_target)
-		    CountTargetReadBytes += size;
-	    else
-		    CountSourceReadBytes += size;
+    size_t n;
+
+    n = 0;
+
+    while (c != EOF) {
+	if (c == ' ') {
+	    buf[n] = '\0';
+	    return (c);
 	}
+
+	buf[n++] = c;
+	if (n == len)
+	    break;
+
+	c = fgetc(fi);
     }
-    return csum_file(algo, filename, buf);
+
+    return (c);
+}
+
+static void
+csum_load(FILE *fi)
+{
+    CSUMNode **pnode = &CSUMBase;
+    CSUMNode *node;
+    int c, n, nlen;
+    char nbuf[sizeof("2147483647")];
+    char *endp;
+
+    /*
+     * Line format: "<code> <name_len> <name>"
+     * - code: hex-encoded digest
+     * - name_len: 10-based integer indicating the length of the file name
+     * - name: the file name (may contain special characters)
+     * Example: "359d5608935488c8d0af7eb2a350e2f8 7 cpdup.c"
+     */
+    c = fgetc(fi);
+    while (c != EOF) {
+	node = malloc(sizeof(CSUMNode));
+	if (node == NULL)
+	    fatal("out of memory");
+	memset(node, 0, sizeof(CSUMNode));
+
+	c = get_field(fi, c, node->csum_Code, sizeof(node->csum_Code));
+	if (c != ' ') {
+	    logerr("Error parsing checksum cache (%s): invalid digest code (%c)\n",
+		   CSUMSCache, c);
+	    goto next;
+	}
+
+	c = fgetc(fi);
+	c = get_field(fi, c, nbuf, sizeof(nbuf));
+	if (c != ' ') {
+	    logerr("Error parsing checksum cache (%s): invalid length (%c)\n",
+		   CSUMSCache, c);
+	    goto next;
+	}
+	nlen = (int)strtol(nbuf, &endp, 10);
+	if (*endp != '\0' || nlen == 0) {
+	    logerr("Error parsing checksum cache (%s): invalid length (%s)\n",
+		   CSUMSCache, nbuf);
+	    goto next;
+	}
+
+	if ((node->csum_Name = malloc(nlen + 1)) == NULL)
+	    fatal("out of memory");
+	node->csum_Name[nlen] = '\0';
+	for (n = 0; n < nlen; n++) {
+	    c = fgetc(fi);
+	    if (c == EOF) {
+		logerr("Error parsing checksum cache (%s): invalid filename\n",
+		       CSUMSCache);
+		goto next;
+	    }
+	    node->csum_Name[n] = c;
+	}
+
+	c = fgetc(fi);
+	if (c != '\n' && c != EOF) {
+	    logerr("Error parsing checksum cache (%s): trailing garbage (%c)\n",
+		   CSUMSCache, c);
+	    while (c != EOF && c != '\n')
+		c = fgetc(fi);
+	}
+	if (c == '\n')
+	    c = fgetc(fi);
+
+	node->csum_Accessed = 1;
+	*pnode = node;
+	pnode = &node->csum_Next;
+
+	if (SummaryOpt) {
+	    CountSourceReadBytes += strlen(node->csum_Code) + strlen(nbuf) +
+		nlen + 1;
+	}
+	continue;
+
+    next:
+	if (node->csum_Name != NULL)
+	    free(node->csum_Name);
+	free(node);
+	while (c != EOF && c != '\n')
+	    c = fgetc(fi);
+	if (c == '\n')
+	    c = fgetc(fi);
+    }
 }

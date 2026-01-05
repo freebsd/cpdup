@@ -1,12 +1,36 @@
 /*-
- * CPDUP.C
+ * SPDX-License-Identifier: BSD-3-Clause
  *
- * CPDUP <options> source destination
+ * Copyright (c) 1997-2010 by Matthew Dillon, Dima Ruban, and Oliver Fromme.
  *
- * (c) Copyright 1997-1999 by Matthew Dillon and Dima Ruban.  Permission to
- *     use and distribute based on the FreeBSD copyright.  Supplied as-is,
- *     USE WITH EXTREME CAUTION.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ * 3. Neither the name of The DragonFly Project nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific, prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
+ * COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+ * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+/*
  * This program attempts to duplicate the source onto the destination as
  * exactly as possible, retaining modify times, flags, perms, uid, and gid.
  * It can duplicate devices, files (including hardlinks), softlinks,
@@ -27,16 +51,12 @@
  *
  *	- does not copy file if mtime, flags, perms, and size match unless
  *	  forced
- *
  *	- copies to temporary and renames-over the original, allowing
  *	  you to update live systems
- *
  *	- copies uid, gid, mtime, perms, flags, softlinks, devices, hardlinks,
  *	  and recurses through directories.
- *
  *	- accesses a per-directory exclusion file, .cpignore, containing
  *	  standard wildcarded ( ? / * style, NOT regex) exclusions.
- *
  *	- tries to play permissions and flags smart in regards to overwriting
  *	  schg files and doing related stuff.
  *
@@ -45,14 +65,6 @@
  *
  *	- Is able to do incremental mirroring/backups via hardlinks from
  *	  the 'previous' version (supplied with -H path).
- */
-
-/*-
- * Example: cc -O cpdup.c -o cpdup -lcrypto
- *
- * ".algo.CHECKSUMS" contains checksumms for the current directory.
- * The string "algo" is replaced by any checksum supported by OpenSSL EVP
- * This file is stored on the source.
  */
 
 #include "cpdup.h"
@@ -390,8 +402,11 @@ main(int ac, char **av)
 
     if (dst) {
 	DstRootPrivs = (hc_geteuid(&DstHost) == 0);
-	if (!DstRootPrivs)
+	if (!DstRootPrivs) {
 	    GroupCount = hc_getgroups(&DstHost, &GroupList);
+	    if (GroupCount < 0)
+		fatal("Unable to get user's groups");
+	}
     }
 #if 0
     /* XXXX DEBUG */
@@ -401,7 +416,7 @@ main(int ac, char **av)
 	fprintf(stderr, "Group[%d] == %d\n", i, GroupList[i]);
 #endif
 
-    bzero(&info, sizeof(info));
+    memset(&info, 0, sizeof(info));
     if (dst) {
 	DstBaseLen = strlen(dst);
 	info.spath = src;
@@ -445,7 +460,7 @@ main(int ac, char **av)
 	    (long long)CountTargetReadBytes,
 	    (long long)CountWriteBytes,
 	    ((double)CountSourceBytes * 2.0) / ((double)(CountSourceReadBytes + CountTargetReadBytes + CountWriteBytes)));
- 	logstd("%lld source items, %lld items copied, %lld items linked, "
+	logstd("%lld source items, %lld items copied, %lld items linked, "
 	       "%lld things deleted\n",
 	    (long long)CountSourceItems,
 	    (long long)CountCopiedItems,
@@ -550,14 +565,14 @@ OwnerMatch(struct stat *st1, struct stat *st2)
 static int
 FlagsMatch(struct stat *st1, struct stat *st2)
 {
-/*
- * Ignore UF_ARCHIVE.  It gets set automatically by the filesystem, for
- * filesystems that support it.  If the destination filesystem supports it, but
- * it's cleared on the source file, then multiple invocations of cpdup would
- * all try to copy the file because the flags wouldn't match.
- *
- * When unpriveleged, ignore flags we can't set
- */
+    /*
+     * Ignore UF_ARCHIVE.  It gets set automatically by the filesystem, for
+     * filesystems that support it.  If the destination filesystem supports it,
+     * but it's cleared on the source file, then multiple invocations of cpdup
+     * would all try to copy the file because the flags wouldn't match.
+     *
+     * When unpriveleged, ignore flags we can't set
+     */
     u_long ignored = DstRootPrivs ? 0 : SF_SETTABLE;
 
 #ifdef UF_ARCHIVE
@@ -577,7 +592,7 @@ hltlookup(struct stat *stp)
     n = stp->st_ino & HLMASK;
 
     for (hl = hltable[n]; hl; hl = hl->next) {
-        if (hl->ino == stp->st_ino) {
+	if (hl->ino == stp->st_ino) {
 	    ++hl->refs;
 	    return hl;
 	}
@@ -602,7 +617,7 @@ hltadd(struct stat *stp, const char *path)
     new->ino = stp->st_ino;
     new->dino = (ino_t)-1;
     new->refs = 1;
-    bcopy(path, new->name, plen + 1);
+    memcpy(new->name, path, plen + 1);
     new->nlinked = 1;
     new->prev = NULL;
     n = stp->st_ino & HLMASK;
@@ -715,7 +730,7 @@ validate_check(const char *spath, const char *dpath)
 		    CountTargetReadBytes += x;
 	    if (x != n)
 		break;
-	    if (bcmp(iobuf1, iobuf2, n) != 0)
+	    if (memcmp(iobuf1, iobuf2, n) != 0)
 		break;
 	}
 	free(iobuf1);
@@ -740,11 +755,11 @@ DoCopy(copy_info_t info, struct stat *stat1, int depth)
     struct stat st1;
     struct stat st2;
     unsigned long st2_flags;
-    int r, mres, fres, st2Valid;
+    int r, mres, st2Valid;
     struct hlink *hln;
     uint64_t size;
 
-    r = mres = fres = st2Valid = 0;
+    r = mres = st2Valid = 0;
     st2_flags = 0;
     size = 0;
     hln = NULL;
@@ -813,13 +828,12 @@ DoCopy(copy_info_t info, struct stat *stat1, int depth)
             if (xlink(hln->name, dpath, stat1->st_flags) < 0) {
 		int tryrelink = (errno == EMLINK);
 		logerr("%-32s hardlink: unable to link to %s: %s\n",
-		    (dpath ? dpath : spath), hln->name, strerror(errno)
-		);
+		       (dpath ? dpath : spath), hln->name, strerror(errno));
                 hltdelete(hln);
                 hln = NULL;
 		if (tryrelink) {
 		    logerr("%-20s hardlink: will attempt to copy normally\n",
-			(dpath ? dpath : spath));
+			   (dpath ? dpath : spath));
 		    goto relink;
 		}
 		++r;
@@ -830,10 +844,8 @@ DoCopy(copy_info_t info, struct stat *stat1, int depth)
 		}
                 if (r == 0) {
 		    if (VerboseOpt) {
-			logstd("%-32s hardlink: %s\n",
-			    (dpath ? dpath : spath),
-			    (st2Valid ? "relinked" : "linked")
-			);
+			logstd("%-32s hardlink: %s\n", (dpath ? dpath : spath),
+			       (st2Valid ? "relinked" : "linked"));
 		    }
 		    CountSourceItems++;
 		    CountCopiedItems++;
@@ -958,9 +970,9 @@ relink:
 		    skipdir = 1;
 		}
 		if (hc_lstat(&DstHost, dpath, &st2) != 0) {
-		    if (NotForRealOpt == 0)
-			    logerr("%s: lstat of newly made dir failed: %s\n",
-				   (dpath ? dpath : spath), strerror(errno));
+		    if (!NotForRealOpt)
+			logerr("%s: lstat of newly made dir failed: %s\n",
+			       (dpath ? dpath : spath), strerror(errno));
 		    st2Valid = 0;
 		    r = 1;
 		    skipdir = 1;
@@ -1092,7 +1104,7 @@ relink:
 		hc_chflags(&DstHost, dpath, stat1->st_flags);
 #endif
 	    if (ForceOpt || mtimecmp(stat1, &st2) != 0) {
-		bzero(tv, sizeof(tv));
+		memset(tv, 0, sizeof(tv));
 		tv[0].tv_sec = stat1->st_mtime;
 		tv[1].tv_sec = stat1->st_mtime;
 #if defined(st_mtime)  /* A macro, so very likely on modern POSIX */
@@ -1108,15 +1120,19 @@ relink:
 	 */
 #ifndef NOCHECKSUM
 	if (UseCsumOpt && S_ISREG(stat1->st_mode)) {
-	    mres = csum_check(CsumAlgo, spath, NULL);
+	    mres = csum_update(CsumAlgo, spath);
 
-	    if (VerboseOpt > 1) {
-		if (mres < 0)
-		    logstd("%-32s md5-update\n", (dpath) ? dpath : spath);
-		else
-		    logstd("%-32s md5-ok\n", (dpath) ? dpath : spath);
-	    } else if (!QuietOpt && mres < 0) {
-		logstd("%-32s md5-update\n", (dpath) ? dpath : spath);
+	    if (mres < 0) {
+		logerr("%-32s checksum-CHECK-FAILED\n", spath);
+	    } else {
+		if (VerboseOpt > 1) {
+		    if (mres > 0)
+			logstd("%-32s checksum-update\n", spath);
+		    else
+			logstd("%-32s checksum-ok\n", spath);
+		} else if (!QuietOpt && mres > 0) {
+		    logstd("%-32s checksum-update\n", spath);
+		}
 	    }
 	}
 #endif
@@ -1127,14 +1143,14 @@ relink:
 	int fd2;
 
 	if (st2Valid)
-		path = mprintf("%s.tmp%d", dpath, (int)getpid());
+	    path = mprintf("%s.tmp%d", dpath, (int)getpid());
 	else
-		path = mprintf("%s", dpath);
+	    path = mprintf("%s", dpath);
 
+#ifndef NOCHECKSUM
 	/*
 	 * Handle check failure message.
 	 */
-#ifndef NOCHECKSUM
 	if (mres < 0)
 	    logerr("%-32s checksum-CHECK-FAILED\n", (dpath) ? dpath : spath);
 #endif
@@ -1233,7 +1249,7 @@ relink:
 		if (n == 0) {
 		    struct timeval tv[2];
 
-		    bzero(tv, sizeof(tv));
+		    memset(tv, 0, sizeof(tv));
 		    tv[0].tv_sec = stat1->st_mtime;
 		    tv[1].tv_sec = stat1->st_mtime;
 #if defined(st_mtime)
@@ -1323,12 +1339,12 @@ skip_copy:
 		n2 = -1;
 	}
 	if (n1 >= 0) {
-	    if (ForceOpt || n1 != n2 || bcmp(link1, link2, n1) != 0 ||
+	    if (ForceOpt || n1 != n2 || memcmp(link1, link2, n1) != 0 ||
 		(st2Valid && symlink_mfo_test(&DstHost, stat1, &st2))
 	    ) {
 		struct timeval tv[2];
 
-		bzero(tv, sizeof(tv));
+		memset(tv, 0, sizeof(tv));
 		tv[0].tv_sec = stat1->st_mtime;
 		tv[1].tv_sec = stat1->st_mtime;
 #if defined(st_mtime)
@@ -1502,7 +1518,7 @@ ScanDir(List *list, struct HostConf *host, const char *path,
 		    }
 		    bufused = strlen(next);
 		    if (bufused)
-			bcopy(next, buf, bufused);
+			memcpy(buf, next, bufused);
 		}
 		if (bufused) {
 		    /* last line has no trailing newline */
@@ -1530,11 +1546,11 @@ ScanDir(List *list, struct HostConf *host, const char *path,
 	 * ignore . and ..
 	 */
 	if (strcmp(den->d_name, ".") != 0 && strcmp(den->d_name, "..") != 0) {
-	     if (UseCpFile && UseCpFile[0] == '/') {
-		 if (CheckList(list, path, den->d_name) == 0)
-			continue;
-	     }
-	     AddList(list, den->d_name, n, statptr);
+	    if (UseCpFile && UseCpFile[0] == '/') {
+		if (CheckList(list, path, den->d_name) == 0)
+		    continue;
+	    }
+	    AddList(list, den->d_name, n, statptr);
 	}
     }
     hc_closedir(host, dir);
@@ -1641,7 +1657,7 @@ RemoveRecur(const char *dpath, dev_t devNo, struct stat *dstat)
 static void
 InitList(List *list)
 {
-    bzero(list, sizeof(List));
+    memset(list, 0, sizeof(List));
     list->li_Node.no_Next = &list->li_Node;
 }
 
@@ -1804,9 +1820,8 @@ YesNo(const char *path)
  *	destination and rename again.  If that fails too, try to
  *	set the flags back the way they were and give up.
  */
-
 static int
-xrename(const char *src, const char *dst, u_long flags __unused)
+xrename(const char *src, const char *dst, u_long flags)
 {
     int r;
 
@@ -1823,21 +1838,22 @@ xrename(const char *src, const char *dst, u_long flags __unused)
 	    else
 		hc_chflags(&DstHost, dst, flags);
 	}
+#else
+	(void)flags;
 #endif
     }
     return(r);
 }
 
 static int
-xlink(const char *src, const char *dst, u_long flags __unused)
+xlink(const char *src, const char *dst, u_long flags)
 {
     int r;
-#ifdef _ST_FLAGS_PRESENT_
-    int e;
-#endif
 
     if ((r = hc_link(&DstHost, src, dst)) < 0) {
 #ifdef _ST_FLAGS_PRESENT_
+	int e;
+
 	if (DstHost.version >= HCPROTO_VERSION_LUCC)
 	    hc_lchflags(&DstHost, src, 0);
 	else
@@ -1846,6 +1862,8 @@ xlink(const char *src, const char *dst, u_long flags __unused)
 	e = errno;
 	hc_chflags(&DstHost, src, flags);
 	errno = e;
+#else
+	(void)flags;
 #endif
     }
     if (r == 0)
