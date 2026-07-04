@@ -69,7 +69,7 @@
 
 #endif /* __linux */
 
-#define VERSION	"1.0.0"
+#define VERSION	"1.1.0"
 #define AUTHORS	"Matt Dillon, Dima Ruban, Oliver Fromme & Martin Matuska"
 
 #if !defined(__unused)
